@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SyncFlow | Ethereal Compass</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base: #Eef2F6;
+            --glass-panel: rgba(255, 255, 255, 0.75);
+            --glass-border: rgba(255, 255, 255, 0.6);
+            --text-primary: #1D1D1F;
+            --text-secondary: #86868B;
+            --accent-color: #007AFF; /* 默认蓝色，会被JS覆盖 */
+        }
+
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background: var(--bg-base); 
+            font-family: 'Inter', -apple-system, sans-serif;
+            overflow: hidden; user-select: none; cursor: none;
+            perspective: 1200px;
+        }
+
+        /* ---------------- 背景与噪点 ---------------- */
+        .noise-layer {
+            position: fixed; inset: 0; pointer-events: none; z-index: 5; opacity: 0.04;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        }
+
+        #aurora-bg {
+            position: fixed; inset: -50%;
+            /* 将背景基色调深：引入深蓝和紫色的暗调，减少纯白色占比 */
+            background: 
+                radial-gradient(circle at 50% 0%, rgba(20, 30, 48, 0.3) 0%, transparent 70%),
+                conic-gradient(from 0deg, #93C5FD, #C4B5FD, #A5F3E0, #93C5FD);
+            filter: blur(80px) contrast(1.2) saturate(1.2); 
+            opacity: 0.9; /* 稍微提高不透明度 */
+            z-index: 0;
+            animation: auroraSpin 60s linear infinite;
+            transition: all 1.2s cubic-bezier(0.22, 1, 0.36, 1); 
+            will-change: filter, transform;
+        }
+        @keyframes auroraSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+        /* ---------------- 顶部：星际罗盘 (Star Compass) ---------------- */
+        #ether-compass {
+            position: fixed; top: 0; left: 0; width: 100%; height: 45vh;
+            display: flex; align-items: center; justify-content: center;
+            pointer-events: none; z-index: 10;
+        }
+
+        .compass-ring {
+            position: relative; width: 320px; height: 320px;
+            border-radius: 50%;
+            border: 1px solid rgba(0,0,0,0.05);
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: inset 0 0 80px rgba(255,255,255,0.5);
+        }
+
+        /* 刻度盘动画 */
+        .compass-ticks {
+            position: absolute; inset: 0; border-radius: 50%;
+            background: repeating-conic-gradient(
+                rgba(0,0,0,0.08) 0deg 0.5deg,
+                transparent 0.5deg 10deg
+            );
+            mask-image: radial-gradient(circle, transparent 60%, black 100%);
+            -webkit-mask-image: radial-gradient(circle, transparent 65%, black 100%);
+            animation: slowRotate 120s linear infinite;
+        }
+
+        /* 中央计数器 */
+        .compass-core {
+            display: flex; flex-direction: column; align-items: center;
+            z-index: 5;
+            background: rgba(255,255,255,0.4); backdrop-filter: blur(20px);
+            padding: 20px 40px; border-radius: 24px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.05), inset 0 0 0 1px rgba(255,255,255,0.6);
+            transition: transform 0.1s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .compass-core.pulse { transform: scale(1.05); }
+
+        .label-sm { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: var(--text-secondary); font-weight: 600; margin-bottom: 4px; }
+        .counter-big { 
+            font-family: 'JetBrains Mono', monospace; font-size: 48px; font-weight: 700; color: var(--text-primary); 
+            letter-spacing: -2px; line-height: 1;
+        }
+
+        /* 卫星轨道 */
+        .orbit-track {
+            position: absolute; inset: -40px; border-radius: 50%;
+            border: 1px dashed rgba(0,0,0,0.06);
+            animation: spinReverse 80s linear infinite;
+        }
+        .user-satellite {
+            position: absolute; width: 10px; height: 10px; border-radius: 50%;
+            top: 50%; left: 50%; margin-left: -5px; margin-top: -5px;
+            box-shadow: 0 0 15px currentColor;
+            transition: transform 0.3s;
+        }
+
+        @keyframes slowRotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes spinReverse { from { transform: rotate(360deg); } to { transform: rotate(0deg); } }
+
+        /* ---------------- 主内容：用户矩阵 ---------------- */
+        #grid-container {
+            position: fixed; top: 38vh; left: 0; width: 100%; bottom: 100px;
+            display: flex; justify-content: center; align-items: flex-start; flex-wrap: wrap;
+            gap: 32px; padding: 20px 40px; box-sizing: border-box;
+            overflow-y: auto; z-index: 20;
+            /* 隐藏滚动条但允许滚动 */
+            scrollbar-width: none; -ms-overflow-style: none;
+        }
+        #grid-container::-webkit-scrollbar { display: none; }
+
+        /* 用户身份卡 */
+        .user-card {
+            width: 360px;
+            background: var(--glass-panel);
+            backdrop-filter: blur(40px) saturate(180%);
+            -webkit-backdrop-filter: blur(40px) saturate(180%);
+            border: 1px solid var(--glass-border);
+            border-radius: 28px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.06);
+            padding: 24px;
+            display: flex; flex-direction: column; gap: 20px;
+            transform-style: preserve-3d;
+            transition: transform 0.1s, box-shadow 0.3s;
+        }
+
+        .card-head { display: flex; align-items: center; gap: 16px; border-bottom: 1px solid rgba(0,0,0,0.04); padding-bottom: 16px; }
+        
+        /* 呼吸光环头像 */
+        .avatar {
+            width: 44px; height: 44px; border-radius: 50%;
+            background: linear-gradient(135deg, var(--user-color), #fff);
+            position: relative;
+        }
+        .avatar::after {
+            content:''; position: absolute; inset: -4px; border-radius: 50%;
+            border: 2px solid var(--user-color); opacity: 0.3;
+            animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+        @keyframes ping { 75%, 100% { transform: scale(1.6); opacity: 0; } }
+
+        .u-info { flex: 1; }
+        .u-name { font-weight: 700; color: var(--text-primary); font-size: 15px; }
+        .u-stat { font-family: 'JetBrains Mono'; font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
+        /* 全尺寸键盘布局 */
+        .kb-layout { display: flex; flex-direction: column; gap: 6px; }
+        .kb-row { display: flex; gap: 5px; }
+        
+        .key {
+            height: 32px; flex: 1; min-width: 20px;
+            background: #fff; border-radius: 6px;
+            box-shadow: 0 2px 0 #D1D1D6, 0 2px 4px rgba(0,0,0,0.05);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 11px; font-weight: 600; color: #666;
+            transition: transform 0.05s, background-color 0.1s;
+        }
+        /* 特殊键宽 */
+        .w-1-5 { flex: 1.5; } .w-2 { flex: 2; } .w-space { flex: 6; }
+        
+        /* 激活态 !important 覆盖所有 */
+        .key.active {
+            transform: translateY(2px) !important;
+            box-shadow: none !important;
+            background: var(--user-color) !important;
+            color: #fff !important;
+        }
+
+        /* ---------------- 游标与特效 ---------------- */
+        .cursor-layer { position: fixed; inset: 0; pointer-events: none; z-index: 100; }
+        .mouse-arrow { position: absolute; top:0; left:0; will-change: transform; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1)); }
+
+        #fx-canvas { position: fixed; inset: 0; pointer-events: none; z-index: 50; }
+
+        /* ---------------- 底部 Dock ---------------- */
+        #dock {
+            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 16px; z-index: 1000;
+        }
+        .dock-pill {
+            background: rgba(255,255,255,0.85); backdrop-filter: blur(20px);
+            border-radius: 20px; height: 56px; padding: 0 12px;
+            display: flex; align-items: center; gap: 6px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.15), 0 0 0 1px rgba(255,255,255,0.5);
+        }
+
+        #msg-input {
+            border: none; background: transparent; width: 220px; outline: none;
+            font-size: 15px; padding: 0 8px; font-family: 'Inter'; font-weight: 500;
+        }
+
+        .icon-btn {
+            width: 40px; height: 40px; border-radius: 12px; border: none; background: transparent;
+            font-size: 20px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; justify-content: center;
+        }
+        .icon-btn:hover { background: rgba(0,0,0,0.05); transform: scale(1.1); }
+        .color-dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+
+        /* 消息气泡 */
+        .bubble {
+            position: fixed; background: #fff; padding: 10px 18px; 
+            border-radius: 18px 18px 18px 4px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+            color: #111; font-weight: 500; font-size: 14px;
+            animation: floatUp 3.5s cubic-bezier(0.19, 1, 0.22, 1) forwards;
+            max-width: 250px; z-index: 2000;
+        }
+        @keyframes floatUp {
+            0% { opacity: 0; transform: translateY(10px) scale(0.9); }
+            10% { opacity: 1; transform: translateY(0) scale(1); }
+            90% { opacity: 1; transform: translateY(-30px); }
+            100% { opacity: 0; transform: translateY(-50px) scale(0.95); }
+        }
+
+    </style>
+</head>
+<body>
+    <div id="aurora-bg"></div>
+    <div class="noise-layer"></div>
+
+    <!-- 1. 顶部罗盘 -->
+    <div id="ether-compass">
+        <div class="compass-ring">
+            <div class="compass-ticks"></div>
+            <div class="orbit-track" id="orbit-track"></div>
+            <div class="compass-core" id="compass-core">
+                <div class="label-sm">GLOBAL KEYSTROKES</div>
+                <div class="counter-big" id="global-counter">0</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. 用户矩阵 -->
+    <div id="grid-container"></div>
+
+    <!-- 3. 光标与特效 -->
+    <div class="cursor-layer" id="cursor-layer"></div>
+    <canvas id="fx-canvas"></canvas>
+
+    <!-- 4. 底部 Dock -->
+    <div id="dock">
+        <div class="dock-pill">
+            <button class="icon-btn" id="mood-btn" title="Change Aura"><div class="color-dot" style="background:#007AFF"></div></button>
+            <div style="width:1px; height:24px; background:rgba(0,0,0,0.1); margin:0 4px;"></div>
+            <button class="icon-btn emoji-trigger" data-e="✨">✨</button>
+            <button class="icon-btn emoji-trigger" data-e="🔥">🔥</button>
+            <button class="icon-btn emoji-trigger" data-e="🎹">🎹</button>
+            <button class="icon-btn emoji-trigger" data-e="🌌">🌌</button>
+        </div>
+        <div class="dock-pill">
+            <input type="text" id="msg-input" placeholder="Type here (Keyboard visualizer is active)..." autocomplete="off">
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const container = document.getElementById('grid-container');
+        const cursorLayer = document.getElementById('cursor-layer');
+        const canvas = document.getElementById('fx-canvas');
+        const ctx = canvas.getContext('2d');
+        const globalCounter = document.getElementById('global-counter');
+        const orbitTrack = document.getElementById('orbit-track');
+        const compassCore = document.getElementById('compass-core');
+
+        let myId = null;
+        let users = {};
+        let particles = [];
+        let emojis = [];
+
+        // 配置：更跟手的光标
+        const LERP_FACTOR = 0.35;
+
+        // 颜色池
+        const COLORS = ['#007AFF', '#FF2D55', '#34C759', '#5856D6', '#FF9500', '#00C7BE', '#AF52DE'];
+        let currColorIdx = 0;
+
+        // 适配 Retina 屏
+        function resize() {
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr; canvas.height = window.innerHeight * dpr;
+            ctx.scale(dpr, dpr);
+            canvas.style.width = '100%'; canvas.style.height = '100%';
+        }
+        window.addEventListener('resize', resize); resize();
+
+        // ---------------- 修复后的键盘布局 (使用标准 code) ----------------
+        // c: event.code (浏览器标准), w: 宽度权重
+        const KB_MAP = [
+            [{c:'Escape',w:1},{c:'Digit1',w:1},{c:'Digit2',w:1},{c:'Digit3',w:1},{c:'Digit4',w:1},{c:'Digit5',w:1},{c:'Digit6',w:1},{c:'Digit7',w:1},{c:'Digit8',w:1},{c:'Digit9',w:1},{c:'Digit0',w:1},{c:'Minus',w:1},{c:'Equal',w:1},{c:'Backspace',w:1.5}],
+            [{c:'Tab',w:1.5},{c:'KeyQ',w:1},{c:'KeyW',w:1},{c:'KeyE',w:1},{c:'KeyR',w:1},{c:'KeyT',w:1},{c:'KeyY',w:1},{c:'KeyU',w:1},{c:'KeyI',w:1},{c:'KeyO',w:1},{c:'KeyP',w:1},{c:'BracketLeft',w:1},{c:'BracketRight',w:1},{c:'Backslash',w:1}],
+            [{c:'CapsLock',w:1.8},{c:'KeyA',w:1},{c:'KeyS',w:1},{c:'KeyD',w:1},{c:'KeyF',w:1},{c:'KeyG',w:1},{c:'KeyH',w:1},{c:'KeyJ',w:1},{c:'KeyK',w:1},{c:'KeyL',w:1},{c:'Semicolon',w:1},{c:'Quote',w:1},{c:'Enter',w:2}],
+            [{c:'ShiftLeft',w:2.3},{c:'KeyZ',w:1},{c:'KeyX',w:1},{c:'KeyC',w:1},{c:'KeyV',w:1},{c:'KeyB',w:1},{c:'KeyN',w:1},{c:'KeyM',w:1},{c:'Comma',w:1},{c:'Period',w:1},{c:'Slash',w:1},{c:'ShiftRight',w:2.5}],
+            [{c:'ControlLeft',w:1.2},{c:'AltLeft',w:1.2},{c:'MetaLeft',w:1.5},{c:'Space',w:6},{c:'MetaRight',w:1.5},{c:'AltRight',w:1.2},{c:'ControlRight',w:1.2}]
+        ];
+
+        // ---------------- Socket 逻辑 ----------------
+        socket.on('connect', () => myId = socket.id);
+
+        socket.on('init_stats', (count) => {
+            globalCounter.innerText = count.toLocaleString();
+        });
+
+        socket.on('update_users', (serverUsers) => {
+            // 清理离线用户
+            for(let id in users) if(!serverUsers[id]) {
+                users[id].el.remove(); users[id].cursor.remove(); users[id].sat.remove();
+                delete users[id];
+            }
+            // 更新用户状态
+            for(let id in serverUsers) {
+                const s = serverUsers[id];
+                if(!users[id]) createClient(id, s);
+                
+                const u = users[id];
+                // 颜色同步
+                if(u.color !== s.color) {
+                    u.color = s.color;
+                    u.el.style.setProperty('--user-color', s.color);
+                    u.cursor.querySelector('path').setAttribute('fill', s.color);
+                    u.sat.style.color = s.color;
+                }
+                // 更新击键数
+                u.statEl.innerText = `${s.keystrokes} Keystrokes`;
+            }
+        });
+
+        socket.on('global_count', (num) => {
+            globalCounter.innerText = num.toLocaleString();
+            // 计数器跳动
+            compassCore.classList.remove('pulse');
+            void compassCore.offsetWidth; // trigger reflow
+            compassCore.classList.add('pulse');
+        });
+
+        socket.on('remote_input', (d) => {
+            if(d.type === 'mouse' && users[d.id]) {
+                users[d.id].tx = d.x; users[d.id].ty = d.y;
+                tiltCard(users[d.id], d.x, d.y);
+            }
+            if(d.type === 'key' && users[d.id]) {
+                visualizeKey(users[d.id], d.code, d.state);
+            }
+        });
+
+        socket.on('spawn_obj', (d) => {
+            if(d.type === 'emoji') spawnEmoji(d.x, d.y, d.val);
+            if(d.type === 'msg') {
+                const u = users[d.id];
+                if(u) {
+                    const rect = u.el.getBoundingClientRect();
+                    createBubble(rect.left + rect.width/2, rect.top, d.val);
+                }
+            }
+        });
+
+        // ---------------- 核心功能函数 ----------------
+
+        function createClient(id, data) {
+            // 1. 卡片
+            const el = document.createElement('div');
+            el.className = 'user-card';
+            el.style.setProperty('--user-color', data.color);
+            
+            // 构建HTML结构
+            let kbHTML = '';
+            KB_MAP.forEach(row => {
+                kbHTML += `<div class="kb-row">`;
+                row.forEach(k => {
+                    let wClass = k.w > 1 ? (k.w===6?'w-space':(k.w===2?'w-2':'w-1-5')) : '';
+                    kbHTML += `<div class="key ${wClass}" data-c="${k.c}"></div>`;
+                });
+                kbHTML += `</div>`;
+            });
+
+            el.innerHTML = `
+                <div class="card-head">
+                    <div class="avatar"></div>
+                    <div class="u-info">
+                        <div class="u-name">USER ${id.substr(0,4)}</div>
+                        <div class="u-stat">0 Keystrokes</div>
+                    </div>
+                </div>
+                <div class="kb-layout">${kbHTML}</div>
+            `;
+            container.appendChild(el);
+
+            // 2. 光标
+            const cursor = document.createElement('div');
+            cursor.className = 'mouse-arrow';
+            cursor.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24"><path d="M3 3L10 21L13 13L21 10L3 3Z" fill="${data.color}" stroke="white" stroke-width="1.5"/></svg>`;
+            cursorLayer.appendChild(cursor);
+
+            // 3. 罗盘卫星
+            const sat = document.createElement('div');
+            sat.className = 'user-satellite';
+            sat.style.color = data.color;
+            sat.style.background = data.color;
+            // 随机轨道偏移
+            const angle = Math.random() * 360;
+            const dist = 140 + Math.random() * 40; // radius
+            sat.style.transform = `rotate(${angle}deg) translateX(${dist}px) rotate(-${angle}deg)`;
+            orbitTrack.appendChild(sat);
+
+            users[id] = {
+                el, cursor, sat,
+                statEl: el.querySelector('.u-stat'),
+                color: data.color,
+                cx: 0.5, cy: 0.5, tx: 0.5, ty: 0.5
+            };
+        }
+
+        // 3D 倾斜效果
+        function tiltCard(u, mx, my) {
+            const rect = u.el.getBoundingClientRect();
+            const cx = rect.left + rect.width/2;
+            const cy = rect.top + rect.height/2;
+            
+            // 将鼠标 0-1 坐标转为屏幕像素
+            const sx = mx * window.innerWidth;
+            const sy = my * window.innerHeight;
+
+            const dx = (sx - cx) / 30;
+            const dy = (sy - cy) / 30;
+
+            u.el.style.transform = `perspective(800px) rotateX(${-dy}deg) rotateY(${dx}deg)`;
+        }
+
+        function visualizeKey(u, code, state) {
+            // 精确查找按键
+            const keyEl = u.el.querySelector(`.key[data-c="${code}"]`);
+            if(keyEl) {
+                if(state === 'down') {
+                    keyEl.classList.add('active');
+                    // 按键粒子
+                    const r = keyEl.getBoundingClientRect();
+                    spawnParticles(r.left + r.width/2, r.top + r.height/2, u.color);
+                } else {
+                    keyEl.classList.remove('active');
+                }
+            }
+        }
+
+        function createBubble(x, y, text) {
+            const b = document.createElement('div');
+            b.className = 'bubble';
+            b.innerText = text;
+            b.style.left = x + 'px';
+            b.style.top = (y - 20) + 'px';
+            document.body.appendChild(b);
+            b.addEventListener('animationend', () => b.remove());
+        }
+
+        // ---------------- 物理引擎循环 ----------------
+        
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x; this.y = y; this.color = color;
+                this.vx = (Math.random()-0.5)*5; this.vy = (Math.random()-0.5)*5;
+                this.life = 1.0;
+            }
+            update() { this.x+=this.vx; this.y+=this.vy; this.life-=0.05; }
+            draw(ctx) {
+                ctx.globalAlpha = this.life; ctx.fillStyle = this.color;
+                ctx.beginPath(); ctx.arc(this.x, this.y, 2, 0, Math.PI*2); ctx.fill();
+            }
+        }
+
+        class EmojiBody {
+            constructor(x, y, val) {
+                this.x = x; this.y = y; this.val = val;
+                this.vx = (Math.random()-0.5)*10; this.vy = -12;
+                this.life = 1.0;
+            }
+            update() {
+                this.vy += 0.5; this.x += this.vx; this.y += this.vy;
+                this.life -= 0.008;
+            }
+            draw(ctx) {
+                ctx.globalAlpha = Math.max(0, this.life); ctx.font = "32px Arial";
+                ctx.textAlign = "center"; ctx.fillText(this.val, this.x, this.y);
+            }
+        }
+
+        function spawnParticles(x, y, c) { for(let i=0; i<5; i++) particles.push(new Particle(x, y, c)); }
+        function spawnEmoji(x, y, v) { emojis.push(new EmojiBody(x, y, v)); }
+
+        function loop() {
+            ctx.clearRect(0, 0, canvas.width/window.devicePixelRatio, canvas.height/window.devicePixelRatio);
+            
+            // 物理
+            [particles, emojis].forEach(arr => {
+                for(let i=arr.length-1; i>=0; i--) {
+                    arr[i].update(); arr[i].draw(ctx);
+                    if(arr[i].life <= 0) arr.splice(i,1);
+                }
+            });
+
+            // 光标插值 (Lerp)
+            for(let id in users) {
+                const u = users[id];
+                u.cx += (u.tx - u.cx) * LERP_FACTOR;
+                u.cy += (u.ty - u.cy) * LERP_FACTOR;
+                u.cursor.style.transform = `translate(${u.cx * window.innerWidth}px, ${u.cy * window.innerHeight}px)`;
+            }
+
+            requestAnimationFrame(loop);
+        }
+        loop();
+
+        // ---------------- 交互监听 (修复核心) ----------------
+
+        // 1. 全局键盘监听 (包括输入框)
+        document.addEventListener('keydown', e => {
+    if (e.repeat) return; 
+
+    // --- 立即本地反馈 (消除延迟的关键) ---
+    if(users[myId]) {
+        // 1. 本地立即加 1
+        let currentCount = parseInt(users[myId].statEl.innerText);
+        users[myId].statEl.innerText = `${currentCount + 1} Keystrokes`;
+        
+        // 2. 本地立即更新罗盘数字 (可选)
+        let globalTotal = parseInt(globalCounter.innerText.replace(/,/g, ''));
+        globalCounter.innerText = (globalTotal + 1).toLocaleString();
+
+        // 3. 视觉反馈
+        visualizeKey(users[myId], e.code, 'down');
+    }
+
+    // 发送 socket 告诉别人
+    socket.emit('key_press', { code: e.code, state: 'down' });
+    if(e.target.id === 'msg-input' && e.key === 'Enter') sendMsg();
+});
+
+        document.addEventListener('keyup', e => {
+            socket.emit('key_press', { code: e.code, state: 'up' });
+            if(users[myId]) visualizeKey(users[myId], e.code, 'up');
+        });
+
+        // 2. 鼠标移动
+        document.addEventListener('mousemove', e => {
+            const x = e.clientX / window.innerWidth;
+            const y = e.clientY / window.innerHeight;
+            if(users[myId]) {
+                users[myId].tx = x; users[myId].ty = y;
+                tiltCard(users[myId], x, y);
+            }
+            socket.emit('mouse_move', {x, y});
+        });
+
+        // 3. UI 按钮
+        document.getElementById('mood-btn').addEventListener('click', () => {
+            currColorIdx = (currColorIdx + 1) % COLORS.length;
+            const c = COLORS[currColorIdx];
+            document.querySelector('.color-dot').style.background = c;
+            socket.emit('change_color', c);
+            if(users[myId]) {
+                users[myId].color = c;
+                users[myId].el.style.setProperty('--user-color', c);
+            }
+        });
+
+        document.querySelectorAll('.emoji-trigger').forEach(btn => {
+            btn.addEventListener('click', e => {
+                const rect = btn.getBoundingClientRect();
+                const char = e.target.dataset.e;
+                spawnEmoji(rect.left, rect.top, char);
+                socket.emit('emoji_sent', {x: rect.left, y: rect.top, val: char});
+            });
+        });
+
+        function sendMsg() {
+    const el = document.getElementById('msg-input');
+    const val = el.value.trim();
+    if(val) {
+        socket.emit('msg_sent', val);
+        el.value = '';
+
+        const bg = document.getElementById('aurora-bg');
+
+        // 第一步：瞬间“浓缩”（增强质感而非亮度）
+        bg.style.transition = 'all 0.15s cubic-bezier(0.2, 0.8, 0.2, 1)';
+        // 关键改动：brightness 保持 1 甚至更低，提高 contrast 让颜色变深
+        bg.style.filter = 'blur(30px) contrast(1.8) saturate(350%) brightness(0.9)';
+        bg.style.transform = 'scale(0.96)'; 
+
+        setTimeout(() => {
+            // 第二步：优雅扩散
+            bg.style.transition = 'all 0.6s cubic-bezier(0.16, 1, 0.3, 1)';
+            bg.style.filter = 'blur(90px) contrast(1.3) saturate(200%) brightness(1)';
+            bg.style.transform = 'scale(1.1)';
+            
+            setTimeout(() => {
+                // 第三步：悠长恢复
+                bg.style.transition = 'all 3s ease-in-out';
+                bg.style.filter = 'blur(80px) contrast(1.2) saturate(1.2) brightness(1)';
+                bg.style.transform = 'scale(1)';
+            }, 600);
+        }, 150);
+    }
+}
+socket.on('individual_update', (data) => {
+    if(users[data.id] && data.id !== myId) { // 排除自己，因为自己已经预更新了
+        users[data.id].statEl.innerText = `${data.count} Keystrokes`;
+    }
+});
+    </script>
+</body>
+</html>
